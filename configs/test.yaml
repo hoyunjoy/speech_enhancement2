@@ -1,0 +1,5 @@
+trainfunc: "mse"
+initial_model: "exps/exp1/model/model000000030.model"
+save_path: "exps/exp1"
+model: "debug"
+port: 8891
