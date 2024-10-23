@@ -62,7 +62,3 @@ class SpeechEnhancementNet(nn.Module):
 def MainModel(**kwargs):
     model = SpeechEnhancementNet(**kwargs)
     return model
-
-if __name__ == '__main__':
-    model = SpeechEnhancementNet(100, 400)
-    a = torch.rand(2, 1, )

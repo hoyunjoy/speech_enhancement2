@@ -8,18 +8,17 @@ from pesq import pesq
 from joblib import Parallel, delayed
 
 class DenseBlock(nn.Module):
-    def __init__(self, h, kernel_size=(3, 3), depth=4):
+    def __init__(self, dense_channel, kernel_size=(3, 3), depth=4, **kwargs):
         super(DenseBlock, self).__init__()
-        self.h = h
         self.depth = depth
         self.dense_block = nn.ModuleList([])
         for i in range(depth):
             dil = 2 ** i
             dense_conv = nn.Sequential(
-                nn.Conv2d(h.dense_channel*(i+1), h.dense_channel, kernel_size, dilation=(dil, 1),
+                nn.Conv2d(dense_channel*(i+1), dense_channel, kernel_size, dilation=(dil, 1),
                           padding=get_padding_2d(kernel_size, (dil, 1))),
-                nn.InstanceNorm2d(h.dense_channel, affine=True),
-                nn.PReLU(h.dense_channel)
+                nn.InstanceNorm2d(dense_channel, affine=True),
+                nn.PReLU(dense_channel)
             )
             self.dense_block.append(dense_conv)
 
@@ -32,20 +31,19 @@ class DenseBlock(nn.Module):
 
 
 class DenseEncoder(nn.Module):
-    def __init__(self, h, in_channel):
+    def __init__(self, dense_channel, in_channel, **kwargs):
         super(DenseEncoder, self).__init__()
-        self.h = h
         self.dense_conv_1 = nn.Sequential(
-            nn.Conv2d(in_channel, h.dense_channel, (1, 1)),
-            nn.InstanceNorm2d(h.dense_channel, affine=True),
-            nn.PReLU(h.dense_channel))
+            nn.Conv2d(in_channel, dense_channel, (1, 1)),
+            nn.InstanceNorm2d(dense_channel, affine=True),
+            nn.PReLU(dense_channel))
 
-        self.dense_block = DenseBlock(h, depth=4) # [b, h.dense_channel, ndim_time, h.n_fft//2+1]
+        self.dense_block = DenseBlock(dense_channel=dense_channel, depth=4) # [b, dense_channel, ndim_time, n_fft//2+1]
 
         self.dense_conv_2 = nn.Sequential(
-            nn.Conv2d(h.dense_channel, h.dense_channel, (1, 3), (1, 2)),
-            nn.InstanceNorm2d(h.dense_channel, affine=True),
-            nn.PReLU(h.dense_channel))
+            nn.Conv2d(dense_channel, dense_channel, (1, 3), (1, 2)),
+            nn.InstanceNorm2d(dense_channel, affine=True),
+            nn.PReLU(dense_channel))
 
     def forward(self, x):
         x = self.dense_conv_1(x)  # [b, 64, T, F]
@@ -55,17 +53,17 @@ class DenseEncoder(nn.Module):
 
 
 class MaskDecoder(nn.Module):
-    def __init__(self, h, out_channel=1):
+    def __init__(self, dense_channel, n_fft, beta, out_channel=1, **kwargs):
         super(MaskDecoder, self).__init__()
-        self.dense_block = DenseBlock(h, depth=4)
+        self.dense_block = DenseBlock(dense_channel=dense_channel, depth=4)
         self.mask_conv = nn.Sequential(
-            nn.ConvTranspose2d(h.dense_channel, h.dense_channel, (1, 3), (1, 2)),
-            nn.Conv2d(h.dense_channel, out_channel, (1, 1)),
+            nn.ConvTranspose2d(dense_channel, dense_channel, (1, 3), (1, 2)),
+            nn.Conv2d(dense_channel, out_channel, (1, 1)),
             nn.InstanceNorm2d(out_channel, affine=True),
             nn.PReLU(out_channel),
             nn.Conv2d(out_channel, out_channel, (1, 1))
         )
-        self.lsigmoid = LearnableSigmoid_2d(h.n_fft//2+1, beta=h.beta)
+        self.lsigmoid = LearnableSigmoid_2d(n_fft//2+1, beta=beta)
 
     def forward(self, x):
         x = self.dense_block(x)
@@ -76,16 +74,16 @@ class MaskDecoder(nn.Module):
 
 
 class PhaseDecoder(nn.Module):
-    def __init__(self, h, out_channel=1):
+    def __init__(self, dense_channel, out_channel=1, **kwargs):
         super(PhaseDecoder, self).__init__()
-        self.dense_block = DenseBlock(h, depth=4)
+        self.dense_block = DenseBlock(dense_channel=dense_channel, depth=4)
         self.phase_conv = nn.Sequential(
-            nn.ConvTranspose2d(h.dense_channel, h.dense_channel, (1, 3), (1, 2)),
-            nn.InstanceNorm2d(h.dense_channel, affine=True),
-            nn.PReLU(h.dense_channel)
+            nn.ConvTranspose2d(dense_channel, dense_channel, (1, 3), (1, 2)),
+            nn.InstanceNorm2d(dense_channel, affine=True),
+            nn.PReLU(dense_channel)
         )
-        self.phase_conv_r = nn.Conv2d(h.dense_channel, out_channel, (1, 1))
-        self.phase_conv_i = nn.Conv2d(h.dense_channel, out_channel, (1, 1))
+        self.phase_conv_r = nn.Conv2d(dense_channel, out_channel, (1, 1))
+        self.phase_conv_i = nn.Conv2d(dense_channel, out_channel, (1, 1))
 
     def forward(self, x):
         x = self.dense_block(x)
@@ -97,12 +95,11 @@ class PhaseDecoder(nn.Module):
 
 
 class TSConformerBlock(nn.Module):
-    def __init__(self, h):
+    def __init__(self, dense_channel, **kwargs):
         super(TSConformerBlock, self).__init__()
-        self.h = h
-        self.time_conformer = ConformerBlock(dim=h.dense_channel,  n_head=4, ccm_kernel_size=31, 
+        self.time_conformer = ConformerBlock(dim=dense_channel,  n_head=4, ccm_kernel_size=31, 
                                              ffm_dropout=0.2, attn_dropout=0.2)
-        self.freq_conformer = ConformerBlock(dim=h.dense_channel,  n_head=4, ccm_kernel_size=31, 
+        self.freq_conformer = ConformerBlock(dim=dense_channel,  n_head=4, ccm_kernel_size=31, 
                                              ffm_dropout=0.2, attn_dropout=0.2)
 
     def forward(self, x):
@@ -116,20 +113,21 @@ class TSConformerBlock(nn.Module):
 
 
 class MPNet(nn.Module):
-    def __init__(self, h, num_tscblocks=4):
+    def __init__(self, dense_channel, num_tscblocks=4, **kwargs):
         super(MPNet, self).__init__()
-        self.h = h
         self.num_tscblocks = num_tscblocks
-        self.dense_encoder = DenseEncoder(h, in_channel=2)
+        self.dense_encoder = DenseEncoder(dense_channel=dense_channel, in_channel=2)
 
         self.TSConformer = nn.ModuleList([])
         for i in range(num_tscblocks):
-            self.TSConformer.append(TSConformerBlock(h))
+            self.TSConformer.append(TSConformerBlock(dense_channel=dense_channel))
         
-        self.mask_decoder = MaskDecoder(h, out_channel=1)
-        self.phase_decoder = PhaseDecoder(h, out_channel=1)
+        self.mask_decoder = MaskDecoder(dense_channel=dense_channel, out_channel=1, **kwargs)
+        self.phase_decoder = PhaseDecoder(dense_channel=dense_channel, out_channel=1, **kwargs)
 
-    def forward(self, noisy_mag, noisy_pha): # [B, F, T]
+    def forward(self, data): # [B, F, T]
+        assert len(data) == 2
+        noisy_mag, noisy_pha = data
         noisy_mag = noisy_mag.unsqueeze(-1).permute(0, 3, 2, 1) # [B, 1, T, F]
         noisy_pha = noisy_pha.unsqueeze(-1).permute(0, 3, 2, 1) # [B, 1, T, F]
         x = torch.cat((noisy_mag, noisy_pha), dim=1) # [B, 2, T, F]
@@ -146,9 +144,9 @@ class MPNet(nn.Module):
         return denoised_mag, denoised_pha, denoised_com
 
 
-def phase_losses(phase_r, phase_g, h):
+def phase_losses(phase_r, phase_g, n_fft, **kwargs):
 
-    dim_freq = h.n_fft // 2 + 1
+    dim_freq = n_fft // 2 + 1
     dim_time = phase_r.size(-1)
 
     gd_matrix = (torch.triu(torch.ones(dim_freq, dim_freq), diagonal=1) - torch.triu(torch.ones(dim_freq, dim_freq), diagonal=2) - torch.eye(dim_freq)).to(phase_g.device)
@@ -171,12 +169,12 @@ def anti_wrapping_function(x):
     return torch.abs(x - torch.round(x / (2 * np.pi)) * 2 * np.pi)
 
 
-def pesq_score(utts_r, utts_g, h):
+def pesq_score(utts_r, utts_g, sample_rate, **kwargs):
 
     pesq_score = Parallel(n_jobs=30)(delayed(eval_pesq)(
                             utts_r[i].squeeze().cpu().numpy(),
                             utts_g[i].squeeze().cpu().numpy(), 
-                            h.sampling_rate)
+                            sample_rate)
                           for i in range(len(utts_r)))
     pesq_score = np.mean(pesq_score)
 
@@ -191,3 +189,12 @@ def eval_pesq(clean_utt, esti_utt, sr):
         pesq_score = -1
 
     return pesq_score
+
+def MainModel(**kwargs):
+    model = MPNet(**kwargs)
+    return model
+
+if __name__ == '__main__':
+    model  = MPNet(dense_channel=64, n_fft=400, beta=2.0)
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total trainable parameters: {total_params}")

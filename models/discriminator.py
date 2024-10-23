@@ -49,6 +49,12 @@ class MetricDiscriminator(nn.Module):
             LearnableSigmoid_1d(1)
         )
 
-    def forward(self, x, y):
+    # def forward(self, x, y):
+    def forward(self, data):
+        x, y = data
         xy = torch.stack((x, y), dim=1)
         return self.layers(xy)
+    
+def MainModel(**kwargs):
+    model = MetricDiscriminator()
+    return model
